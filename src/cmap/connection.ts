@@ -34,7 +34,7 @@ import {
   OpQueryOptions,
   Msg
 } from './commands';
-import { BSONSerializeOptions, Document, Long, pluckBSONSerializeOptions } from '../bson';
+import { BSONSerializeOptions, Document, Long, pluckBSONSerializeOptions, ObjectId } from '../bson';
 import type { AutoEncrypter } from '../deps';
 import type { MongoCredentials } from './auth/mongo_credentials';
 import type { Stream } from './connect';
@@ -218,6 +218,10 @@ export class Connection extends EventEmitter {
 
     // TODO: remove this, and only use the `StreamDescription` in the future
     this[kIsMaster] = response;
+  }
+
+  get serviceIdd(): ObjectId {
+    return this.ismaster.serviceId;
   }
 
   get generation(): number {
@@ -632,8 +636,10 @@ export class CryptoConnection extends Connection {
   }
 }
 
-function hasSessionSupport(conn: Connection) {
-  return conn.description.logicalSessionTimeoutMinutes != null;
+/** @public */
+export function hasSessionSupport(conn: Connection): boolean {
+  const description = conn.description;
+  return description.logicalSessionTimeoutMinutes != null || !!description.loadBalanced;
 }
 
 function supportsOpMsg(conn: Connection) {

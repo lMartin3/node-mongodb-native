@@ -157,32 +157,38 @@ export class Server extends EventEmitter {
       this.clusterTime = clusterTime;
     });
 
-    // create the monitor
-    this[kMonitor] = new Monitor(this, this.s.options);
-    relayEvents(this[kMonitor], this, [
-      Server.SERVER_HEARTBEAT_STARTED,
-      Server.SERVER_HEARTBEAT_SUCCEEDED,
-      Server.SERVER_HEARTBEAT_FAILED
-    ]);
+    // create the monitor if not in load balancer mode.
+    if (!this.s.options.loadBalanced) {
+      this[kMonitor] = new Monitor(this, this.s.options);
+      relayEvents(this[kMonitor], this, [
+        Server.SERVER_HEARTBEAT_STARTED,
+        Server.SERVER_HEARTBEAT_SUCCEEDED,
+        Server.SERVER_HEARTBEAT_FAILED
+      ]);
 
-    this[kMonitor].on('resetConnectionPool', () => {
-      this.s.pool.clear();
-    });
+      this[kMonitor].on('resetConnectionPool', () => {
+        this.s.pool.clear();
+      });
 
-    this[kMonitor].on('resetServer', (error: MongoError) => markServerUnknown(this, error));
-    this[kMonitor].on(Server.SERVER_HEARTBEAT_SUCCEEDED, (event: ServerHeartbeatSucceededEvent) => {
-      this.emit(
-        Server.DESCRIPTION_RECEIVED,
-        new ServerDescription(this.description.hostAddress, event.reply, {
-          roundTripTime: calculateRoundTripTime(this.description.roundTripTime, event.duration)
-        })
+      this[kMonitor].on('resetServer', (error: MongoError) => markServerUnknown(this, error));
+      this[kMonitor].on(
+        Server.SERVER_HEARTBEAT_SUCCEEDED,
+        (event: ServerHeartbeatSucceededEvent) => {
+          this.emit(
+            Server.DESCRIPTION_RECEIVED,
+            new ServerDescription(this.description.hostAddress, event.reply, {
+              roundTripTime: calculateRoundTripTime(this.description.roundTripTime, event.duration),
+              loadBalanced: options.loadBalanced
+            })
+          );
+
+          if (this.s.state === STATE_CONNECTING) {
+            stateTransition(this, STATE_CONNECTED);
+            this.emit(Server.CONNECT, this);
+          }
+        }
       );
-
-      if (this.s.state === STATE_CONNECTING) {
-        stateTransition(this, STATE_CONNECTED);
-        this.emit(Server.CONNECT, this);
-      }
-    });
+    }
   }
 
   get description(): ServerDescription {
@@ -208,7 +214,16 @@ export class Server extends EventEmitter {
     }
 
     stateTransition(this, STATE_CONNECTING);
-    this[kMonitor].connect();
+
+    // If in load balancer mode we automatically set the server to
+    // a load balancer. It never transitions out of this state and
+    // has no monitor.
+    if (!this.s.options.loadBalanced) {
+      this[kMonitor].connect();
+    } else {
+      stateTransition(this, STATE_CONNECTED);
+      this.emit(Server.CONNECT, this);
+    }
   }
 
   /** Destroy the server connection */
@@ -226,7 +241,10 @@ export class Server extends EventEmitter {
 
     stateTransition(this, STATE_CLOSING);
 
-    this[kMonitor].close();
+    if (!this.s.options.loadBalanced) {
+      this[kMonitor].close();
+    }
+
     this.s.pool.close(options, err => {
       stateTransition(this, STATE_CLOSED);
       this.emit('closed');
@@ -241,7 +259,9 @@ export class Server extends EventEmitter {
    * this will be a no-op.
    */
   requestCheck(): void {
-    this[kMonitor].requestCheck();
+    if (!this.s.options.loadBalanced) {
+      this[kMonitor].requestCheck();
+    }
   }
 
   /**
@@ -299,6 +319,7 @@ export class Server extends EventEmitter {
       return;
     }
 
+    // TODO: Durran: Alert the connection pool to the type of operation.
     this.s.pool.withConnection((err, conn, cb) => {
       if (err || !conn) {
         markServerUnknown(this, err);
@@ -324,6 +345,7 @@ export class Server extends EventEmitter {
       return;
     }
 
+    // TODO: Durran: Alert the connection pool to the type of operation.
     this.s.pool.withConnection((err, conn, cb) => {
       if (err || !conn) {
         markServerUnknown(this, err);
@@ -349,6 +371,7 @@ export class Server extends EventEmitter {
       return;
     }
 
+    // TODO: Durran: Alert the connection pool to the type of operation.
     this.s.pool.withConnection((err, conn, cb) => {
       if (err || !conn) {
         markServerUnknown(this, err);
@@ -382,6 +405,7 @@ export class Server extends EventEmitter {
       return;
     }
 
+    // TODO: Durran: Alert the connection pool to the type of operation.
     this.s.pool.withConnection((err, conn, cb) => {
       if (err || !conn) {
         markServerUnknown(this, err);
